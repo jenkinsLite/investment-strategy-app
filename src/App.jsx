@@ -27,7 +27,6 @@ function App() {
     setResponse('Connecting to your AI advisor...');
 
     try {
-      console.log('Starting agent invocation...');
 
       const session = await fetchAuthSession({ forceRefresh: true });
       const credentials = session.credentials;
@@ -35,11 +34,6 @@ function App() {
       if (!credentials || !credentials.accessKeyId) {
         throw new Error('No AWS credentials received from Cognito.');
       }
-
-      console.log('Credentials received:', {
-        accessKeyId: credentials.accessKeyId,
-        expiration: credentials.expiration?.toISOString()
-      });
 
       const payload = {
         prompt: `Provide clear, practical investment strategies for a ${lifeStagePromptMap[lifeStage]}. 
@@ -64,8 +58,6 @@ Include key actions, recommended account types, asset allocation ideas, and end 
         body,
       });
 
-      console.log('Request prepared:', { path, method: request.method });
-
       const signer = new SignatureV4({
         credentials,
         service: 'bedrock-agentcore',
@@ -74,16 +66,12 @@ Include key actions, recommended account types, asset allocation ideas, and end 
       });
 
       const signedRequest = await signer.sign(request);
-      console.log('Signed request prepared. Headers:', signedRequest.headers);
 
       const fetchResponse = await fetch(`https://${hostname}${path}`, {
         method: 'POST',
         headers: signedRequest.headers,
         body: signedRequest.body,
       });
-
-      console.log('Fetch sent. Status:', fetchResponse.status);
-      console.log('Response headers:', [...fetchResponse.headers.entries()]);
 
       if (!fetchResponse.ok) {
         const errorText = await fetchResponse.text();
@@ -93,19 +81,41 @@ Include key actions, recommended account types, asset allocation ideas, and end 
       const reader = fetchResponse.body?.getReader();
       if (!reader) throw new Error('No response body');
 
-      let fullText = '';
       const decoder = new TextDecoder();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullText += decoder.decode(value);
-      }
+let fullText = '';
+let buffer = '';
 
-      console.log('Full response text received:', fullText.substring(0, 200) + '...');
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  let chunk = decoder.decode(value);
+
+  // Clean the chunk immediately (remove "data:", quotes, etc.)
+  chunk = chunk.replace(/data:\s*/gi, '').replace(/^["']+|["']+$/g, '').trim();
+
+  buffer += chunk;
+
+  // Check for sentence/paragraph end (period, question, exclamation + space/newline)
+  if (buffer.match(/[\.\!\?]\s*$/) || buffer.includes('\n\n')) {
+    fullText += buffer + ' '; // Add space for natural flow
+    setResponse(fullText.trim()); // Update UI with complete sentence
+    buffer = ''; // Reset buffer
+  }
+}
+
+// Flush any remaining buffer at the end
+if (buffer) {
+  fullText += buffer;
+  setResponse(fullText.trim());
+}
+
+      console.log("fullText.trim() response: ", fullText.trim());
 
       try {
         const parsed = JSON.parse(fullText.trim());
+        console.log("parsed response: ", parsed);
         setResponse(parsed.content || fullText.trim() || 'No content received.');
       } catch {
         setResponse(fullText.trim() || 'Received empty response.');
@@ -155,21 +165,53 @@ Include key actions, recommended account types, asset allocation ideas, and end 
         </button>
       </div>
 
-      {response && (
-        <div
-          style={{
-            backgroundColor: '#f8f9fa',
-            padding: '25px',
-            borderRadius: '10px',
-            border: '1px solid #ddd',
-            whiteSpace: 'pre-wrap',
-            lineHeight: '1.6'
-          }}
-        >
-          <h2 style={{ marginTop: '0' }}>Recommended Strategies:</h2>
-          <p style={{ fontSize: '16px' }}>{response}</p>
-        </div>
-      )}
+{response && (
+  <div style={{
+    backgroundColor: '#1e1e1e',           // Dark background like terminal
+    color: '#d4d4d4',                     // Light gray text
+    fontFamily: 'Consolas, "Courier New", monospace', // Classic terminal font
+    fontSize: '15px',
+    lineHeight: '1.45',
+    padding: '20px',
+    borderRadius: '8px',
+    marginTop: '24px',
+    border: '1px solid #444',
+    overflowX: 'auto',                    // Horizontal scroll if very long lines
+    whiteSpace: 'pre-wrap',               // Preserves spaces & wraps long lines
+    wordBreak: 'break-word',              // Breaks very long words
+    maxHeight: '600px',                   // Optional: limit height with scroll
+    overflowY: 'auto',
+  }}>
+    <h3 style={{
+      margin: '0 0 16px 0',
+      color: '#9cdcfe',                   // Light blue header like CLI titles
+      fontSize: '18px',
+      fontWeight: 600
+    }}>
+      Recommended Strategies
+    </h3>
+
+    {/* The raw response — rendered as pre-formatted text */}
+    <pre style={{
+      margin: 0,
+      padding: 0,
+      background: 'transparent',
+      border: 'none',
+      color: 'inherit',
+      fontFamily: 'inherit',
+      fontSize: 'inherit',
+      lineHeight: 'inherit',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word'
+    }}>
+      {response
+        // Clean up common streaming artifacts
+        .replace(/data:\s*/gi, '')           // Remove any "data:" prefixes
+        .replace(/^["']+|["']+$/g, '')       // Strip stray quotes
+        .trim()}
+    </pre>
+  </div>
+)}
 
       <p style={{ textAlign: 'center', marginTop: '50px', color: '#666', fontSize: '14px' }}>
         <em>Disclaimer: General educational information only. Consult a professional advisor.</em>
